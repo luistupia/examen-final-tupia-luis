@@ -18,7 +18,7 @@ pipeline{
                 }
                 post{
                     success {
-                        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, onlyIfSuccessful: true
+                        archiveArtifacts artifacts: 'build/libs/labmaven-*-SNAPSHOT.jar', fingerprint: true, onlyIfSuccessful: true
                     }
                 }   
             }
