@@ -13,9 +13,14 @@ pipeline{
                 steps {
                     script {                        
                         sh 'mvn clean package'
-                        sh 'mvn -B verify'
-                    }
+                        sh 'mvn -B verify'                        
+                    }                    
                 }
+                post{
+                    success {
+                        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, onlyIfSuccessful: true
+                    }
+                }   
             }
             stage('SonarQube'){
                 agent {
