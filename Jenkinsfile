@@ -1,69 +1,79 @@
-try {
-    node {
-
-        stage('Preparation') {
-            cleanWs()
-            checkout scm
-
-            sh 'echo install Snyk'
-            sh("curl -O -s -L https://static.snyk.io/cli/latest/snyk-linux")
-            sh("curl -O -s -L https://static.snyk.io/cli/latest/snyk-linux.sha256")
-            sh("shasum -c snyk-linux.sha256")
-            sh("chmod +x snyk-linux && mv snyk-linux ./snyk")
-
-            sh 'echo Snyk Login'
-            withCredentials([string(credentialsId: 'SNYK_TOKEN', variable: 'SNYK_TOKEN')]) {
-                sh './snyk auth ${SNYK_TOKEN}'
-                }
+pipeline{
+    agent any
+    environment{
+        DOCKER_CREDS = credentials('docker-credentials')
         }
-
-        stage('Snyk SCA') {
-            tools {
-                maven '3.8.7'
-            }
-            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-
-                sh './snyk test --org='4ccff8cb-520b-4020-8159-5c24b69ca40f' --sarif-file-output=results-open-source.sarif'
-            }
-            recordIssues tool: sarif(name: 'Snyk Open Source', id: 'snyk-open-source', pattern: 'results-open-source.sarif')
-        }
-
-        stage('Snyk Code') {
-            tools {
-                maven '3.8.7'
-            }
-            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                sh './snyk code test --sarif-file-output=results-code.sarif'
-            }
-            recordIssues  tool: sarif(name: 'Snyk Code', id: 'snyk-code', pattern: 'results-code.sarif')
-        }
-
-/*
-        stage('Snyk Container') {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-
-                    credentialBinding = utils.getCredentialMap(map_credentials["redhat"].credentials)
-                    withCredentials(credentialBinding){
-                        sh ("set +x ; docker login -u ${REGISTRY_USERNAME} -p ${REGISTRY_PASSWORD} ${REGISTRY_REDHAT} ")
-                        sh "./snyk container test ${REGISTRY_REDHAT}/juice-shop --file=Dockerfile --sarif-file-output=results-container.sarif"
+        stages{
+            stage('build'){
+                agent {
+                    docker {
+                        image 'maven:3.6.3-openjdk-11-slim'
+                    }
+                }   
+                steps {
+                    script {                        
+                        sh 'mvn clean package'
+                        sh 'mvn -B verify'
                     }
                 }
-                recordIssues tool: sarif(name: 'Snyk Container', id: 'snyk-container', pattern: 'results-container.sarif')
             }
-
-        stage('Snyk IaC') {
-            steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh './snyk iac test --sarif-file-output=results-iac.sarif'
+            stage('SonarQube'){
+                steps {
+                    script{
+                        def scannerHome = tool 'scanner-default'
+                        withSonarQubeEnv('sonar-server') {
+                        sh "${scannerHome}/bin/sonar-scanner \
+                            -Dsonar.projectKey=labmaven01 \
+                            -Dsonar.projectName=labmaven01 \
+                            -Dsonar.sources=src/main \
+                            -Dsonar.sourceEncoding=UTF-8 \
+                            -Dsonar.language=java \
+                            -Dsonar.tests=src/test \
+                            -Dsonar.junit.reportsPath=target/surefire-reports \
+                            -Dsonar.surefire.reportsPath=target/surefire-reports \
+                            -Dsonar.jacoco.reportPath=target/jacoco.exec \
+                            -Dsonar.java.binaries=target/classes \
+                            -Dsonar.java.coveragePlugin=jacoco \
+                            -Dsonar.coverage.jacoco.xmlReportPaths=target/jacoco.xml \
+                            -Dsonar.exclusions=**/*IT.java,**/*TEST.java,**/*Test.java,**/src/it**,**/src/test**,**/gradle/wrapper** \
+                            -Dsonar.java.libraries=target/*.jar"
+                        }
+                    }                    
                 }
-                recordIssues tool: sarif(name: 'Snyk IaC', id: 'snyk-iac', pattern: 'results-iac.sarif')
+            }
+            stage('build image'){
+                steps {
+                    copyArtifacts filter: 'target/*.jar',
+                                    fingerprintArtifacts: true,
+                                    projectName: '${JOB_NAME}',
+                                    flatten: true,
+                                    selector: specific('${BUILD_NUMBER}'),
+                                    target: 'build/libs/'
+                    sh 'docker --version'
+                    sh 'docker-compose --version'
+                    sh 'docker-compose build'
+                }
+            }
+            stage('push docker'){
+                steps {
+                    script {
+                        sh 'docker login -u ${DOCKER_CREDS_USR} -p ${DOCKER_CREDS_PSW}'
+                        sh 'docker tag msmicroservice ${DOCKER_CREDS_USR}/msmicroservice:$BUILD_NUMBER'
+                        sh 'docker push ${DOCKER_CREDS_USR}/msmicroservice:$BUILD_NUMBER'
+                        sh 'docker logout'
+                    }
+                }
+            }
+            stage('run container'){
+                steps {
+                    script {
+                        sh 'docker login -u ${DOCKER_CREDS_USR} -p ${DOCKER_CREDS_PSW}'
+                        sh 'docker rm galaxyLab -f'
+                        sh 'docker run -d -p 8080:8080 --name galaxyLab ${DOCKER_CREDS_USR}/msmicroservice:$BUILD_NUMBER'
+                        //sh 'docker run -d -p 8080:8080 ${DOCKER_CREDS_USR}/msmicroservice:$BUILD_NUMBER'
+                        sh 'docker logout'
+                    }
+                }
             }
         }
-*/
-
-    }
-} catch (Exception e) {
-    node {
-        throw e
-    }
 }
