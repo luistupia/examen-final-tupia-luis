@@ -51,12 +51,7 @@ pipeline{
             }
             stage('build image'){
                 steps {
-                    copyArtifacts filter: 'target/*.jar',
-                                    fingerprintArtifacts: true,
-                                    projectName: '${JOB_NAME}',
-                                    flatten: true,
-                                    selector: specific('${BUILD_NUMBER}'),
-                                    target: 'build/libs/'
+                    sh 'ls -la target/'
                     sh 'docker --version'
                     sh 'docker-compose --version'
                     sh 'docker-compose build'
